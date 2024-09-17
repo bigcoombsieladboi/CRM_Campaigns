@@ -1,0 +1,56 @@
+SET allow_experimental_join_condition=1;
+
+WITH actions AS (
+    SELECT 
+        * 
+    FROM 
+        kraken.campaign_campaignactionlog 
+    WHERE 
+        tag LIKE '%prospect%'), 
+
+user_orders AS (
+    SELECT 
+        a.user_id as user_id, 
+        charge_id, 
+        tag, 
+        message,
+        a.created_at as created_at, 
+        o.id as order_id, 
+        o.type as type, 
+        o.user_id as order_user_id, 
+        credit, 
+        credit_validity_in_days,
+        payment_method,
+        o.created_at as order_date
+    FROM 
+        actions a 
+    LEFT JOIN 
+        orders.orders o 
+    ON 
+        a.user_id = o.user_id
+        and order_date between a.created_at and (a.created_at + interval 3 day)
+        and o.status = 6)
+        
+select
+    tag,
+    message,
+    count(distinct actions.user_id) as users_count,
+    round(avg( age('hour', actions.created_at, now()))) as sent_at_since,
+    countIf(distinct user_id, order_id <> 0) as total_conversions,
+    countIf(distinct user_id, order_id <> 0 and type = 0) as retail_conversions,
+    countIf(distinct user_id, order_id <> 0 and type = 1) as food_conversions,
+    count(distinct order_id)/(count(distinct order_user_id)+1) as freq,
+    sum(order_charges.items_price_cents/100)/total_conversions as average_basket,
+    countIf(order_id, payment_method!=2 and payment_method is not null)/total_conversions * 100  as paid_users_ratio,
+    sum(order_charges.total_price_cents/100) as gmv,
+    ROUND(AVG(order_charges.discount_cents)/100) as average_discount,
+    ROUND(AVG(order_charges.items_discount_cents)/100) as average_basket_discount,
+    ROUND(AVG(order_charges.delivery_discount_cents)/100) as average_delivery_discount,
+    total_conversions/users_count as total_conversions_ratio,
+    retail_conversions/users_count as retail_conversions_ratio,
+    food_conversions/users_count as food_conversions_ratio
+from user_orders as actions
+left join orders.order_charges final on 
+    order_charges.id = actions.charge_id
+group by tag, message
+order by sent_at_since
